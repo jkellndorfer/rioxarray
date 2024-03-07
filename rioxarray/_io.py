@@ -997,6 +997,7 @@ def open_rasterio(
     decode_times: bool = True,
     decode_timedelta: Optional[bool] = None,
     band_as_variable: bool = False,
+    force_northern_utm: bool = False,
     **open_kwargs,
 ) -> Union[Dataset, DataArray, list[Dataset]]:
     # pylint: disable=too-many-statements,too-many-locals,too-many-branches
@@ -1067,6 +1068,9 @@ def open_rasterio(
         If None (default), assume the same value of decode_time.
     band_as_variable: bool, default=False
         If True, will load bands in a raster to separate variables.
+    force_northen_utm: bool, default=False
+        If True, will convert false northing for southern EPSG (327XX)
+        to EPSG (326XX) and y = y - 10e6.
     **open_kwargs: kwargs, optional
         Optional keyword arguments to pass into :func:`rasterio.open`.
 
@@ -1286,6 +1290,16 @@ def open_rasterio(
             for attr, value in result.attrs.items()
             if not attr.startswith(f"{result.name}#")
         }
+    # Force northern UTM coordinates
+    # Negative UTM y coordinates (EPSG:326XX) may be preferable to the false northing coordinates
+    # for southern hemisphere UTM coordinates (EPSG:327XX)
+    # Also, hvplot with geo=True has wrong southern latitude coordinates (as of 3/6/2024)
+    # See also:
+    # https://www.usgs.gov/faqs/why-do-landsat-scenes-southern-hemisphere-display-negative-utm-values
+    if parse_coordinates and force_northern_utm and ":327" in result.rio.crs.to_string():
+        epsg = result.rio.crs.to_string().replace(":327", ":326")
+        result["y"] = result["y"] - 10e6
+        result.rio.write_crs(epsg, inplace=True)
     # Make the file closeable
     result.set_close(manager.close)
     result.rio._manager = manager
